@@ -265,10 +265,22 @@ private:
     BlockID_t BlockID
   );
 
+  Block_t& GetBlock(ShapeTypeAmount_t i) {
+    return Blocks[i];
+  }
+
   struct BlockProperties_t{
     uint16_t MaxElementPerBlock;
     decltype(Block_t::RenderDataSize) RenderDataSize;
     decltype(Block_t::DataSize) DataSize;
+    struct init_t {
+      uint32_t index;
+      uint32_t size;
+      uint32_t type; // for example GL_FLOAT
+      uint32_t stride;
+      void* pointer;
+    };
+    std::vector<init_t> locations;
   };
 
   struct OpenProperties_t{
@@ -297,6 +309,41 @@ private:
       Blocks[i].List.Close();
     }
   }
+
+  void NewFunction(shaper_t::ShapeTypeAmount_t ShapeType, shaper_t::bm_BaseData_t* bmbase, shaper_t::Block_t& Block, const shaper_t::bm_NodeReference_t& bmnr) {
+    PerBlockData_t& data = GetPerBlockData(ShapeType, bmbase->LastBlockNR);
+    data.MinEdit = std::min(data.MinEdit, (uint32_t)bmbase->LastBlockElementCount * Block.RenderDataSize);
+    data.MaxEdit = std::max(data.MaxEdit, (uint32_t)(bmbase->LastBlockElementCount + 1) * Block.RenderDataSize);
+
+    /*if (data.bqid.iic() == true) {
+
+    }*/
+    data.bqid = BlockQueue.NewNodeLast();
+    auto& bque = BlockQueue[data.bqid];
+    bque.blid = bmbase->LastBlockNR;
+    bque.bmid = bmnr;
+  }
+
+  void ElementFullyEdited(
+    shaper_t::ShapeTypeAmount_t ShapeType,
+    shaper_t::BlockList_t::nr_t blid,
+    shaper_t::bm_t::nr_t bmid,
+    uint16_t ElementIndexInBlock
+  ) {
+    Block_t& Block = Blocks[ShapeType];
+    PerBlockData_t& data = GetPerBlockData(ShapeType, blid);
+    data.MinEdit = std::min(data.MinEdit, (uint32_t)ElementIndexInBlock * Block.RenderDataSize);
+    data.MaxEdit = std::max(data.MaxEdit, (uint32_t)(ElementIndexInBlock + 1) * Block.RenderDataSize);
+
+    if (!data.bqid.iic()) {
+      return;
+    }
+    data.bqid = BlockQueue.NewNodeLast();
+    auto& bque = BlockQueue[data.bqid];
+    bque.blid = blid;
+    bque.bmid = bmid;
+  }
+
 
   ShapeID_t add(
     const void *KeyDataArray,
@@ -362,17 +409,7 @@ private:
     }
     else{
       bmbase->LastBlockElementCount++;
-
-      PerBlockData_t& data = GetPerBlockData(ShapeType, bmbase->LastBlockNR);
-      data.MinEdit = std::min(data.MinEdit, (uint32_t)bmbase->LastBlockElementCount * Block.RenderDataSize);
-      data.MaxEdit = std::max(data.MaxEdit, (uint32_t)(bmbase->LastBlockElementCount + 1) * Block.RenderDataSize);
-
-      if (data.bqid.iic() == true) {
-        data.bqid = BlockQueue.NewNodeLast();
-        auto& bque = BlockQueue[data.bqid];
-        bque.blid = bmbase->LastBlockNR;
-        bque.bmid = bmnr;
-      }
+      ElementFullyEdited(ShapeType, bmbase->LastBlockNR, bmnr, bmbase->LastBlockElementCount);
     }
 
     gt_NoNewBlockManager:
@@ -393,6 +430,9 @@ private:
       Block.DataSize
     );
     _GetShapeID(ShapeType, bmbase->LastBlockNR, bmbase->LastBlockElementCount) = shapeid;
+
+    //TODO REMOVE?
+    ElementFullyEdited(ShapeType, bmbase->LastBlockNR, bmnr, bmbase->LastBlockElementCount);
 
     return shapeid;
   }
