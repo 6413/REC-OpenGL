@@ -1,3 +1,7 @@
+#pragma once
+
+#include <fan/graphics/opengl/uniform_block.h>
+
 struct shaper_t{
   public: /* -------------------------------------------------------------------------------- */
 
@@ -59,8 +63,12 @@ struct shaper_t{
     uint8_t MaxElementPerBlock; /* (p.MaxElementPerBlock[n] - 1) */
     uint16_t RenderDataSize;
     uint16_t DataSize;
+
+    fan::opengl::core::vao_t m_vao;
+    fan::opengl::core::vbo_t m_vbo;
   }*Blocks;
 
+public:
   #pragma pack(push, 1)
     struct bm_BaseData_t{
       ShapeTypeAmount_t ShapeType;
@@ -69,6 +77,7 @@ struct shaper_t{
       uint8_t LastBlockElementCount;
     };
   #pragma pack(pop)
+private:
 
   #define BLL_set_prefix bm
   #define BLL_set_Language 1
@@ -77,7 +86,9 @@ struct shaper_t{
   #define BLL_set_AreWeInsideStruct 1
   #define BLL_set_type_node ktbmnr_t
   #include <WITCH/BLL/BLL.h>
+public:
   bm_t bm;
+private:
   /* sizeof(bm_BaseData_t) + KeySizesSum */
 
   #pragma pack(push, 1)
@@ -158,7 +169,7 @@ struct shaper_t{
     RenderData   Data         ShapeID
     [|||       ] [|||       ] [|||       ]
   */
-
+public:
   /* TODO those are made uintptr_t to not overflow, maybe there is better way? */
   uint8_t *_GetRenderData(
     ShapeTypeAmount_t ShapeType,
@@ -169,6 +180,7 @@ struct shaper_t{
       Blocks[ShapeType].RenderDataSize * ElementIndex
     ];
   }
+private:
   uint8_t *_GetData(
     ShapeTypeAmount_t ShapeType,
     BlockList_t::nr_t blid,
@@ -207,16 +219,16 @@ struct shaper_t{
   BlockQueue_t BlockQueue;
 
   struct PerBlockData_t{
-    /* durum opengl id stuff here */
+
+    void clear() {
+     bqid.sic();
+     MinEdit = (decltype(MinEdit))-1;
+     MaxEdit = 0;
+    }
+
     uint32_t MinEdit;
     uint32_t MaxEdit;
     BlockQueue_t::nr_t bqid;
-    void si(){ /* set invalid */
-      bqid = (decltype(bqid.NRI))-2;
-    }
-    bool ii(){ /* is invalid */
-      return bqid == (decltype(bqid.NRI))-2;
-    }
   };
 
   using BlockID_t = BlockList_t::nr_t;
@@ -247,6 +259,11 @@ struct shaper_t{
       (uintptr_t)Blocks[ShapeType].MaxElementPerBlock + 1
     );
   }
+  void SetPerBlockData(
+    bm_t::nr_t bm_id,
+    ShapeTypeAmount_t ShapeType,
+    BlockID_t BlockID
+  );
 
   struct BlockProperties_t{
     uint16_t MaxElementPerBlock;
@@ -267,40 +284,7 @@ struct shaper_t{
 
   void Open(
     const OpenProperties_t p
-  ){
-    KeyAmount = p.KeyAmount;
-    __MemoryCopy(p.KeyInfos, KeyInfos, KeyAmount * sizeof(KeyInfos[0]));
-    KeySizesSum = 0;
-    for(uintptr_t i = 0; i < KeyAmount; i++){
-      KeySizesSum += KeyInfos[i].Size;
-    }
-
-    ShapeTypeAmount = p.ShapeTypeAmount;
-
-    Blocks = new Block_t[ShapeTypeAmount];
-    for(ShapeTypeAmount_t i = 0; i < ShapeTypeAmount; i++){
-      if(p.BlockProperties[i].MaxElementPerBlock > 0x100){
-        __abort();
-      }
-      Blocks[i].MaxElementPerBlock = p.BlockProperties[i].MaxElementPerBlock - 1;
-      Blocks[i].RenderDataSize = p.BlockProperties[i].RenderDataSize;
-      Blocks[i].DataSize = p.BlockProperties[i].DataSize;
-
-      Blocks[i].List.Open(
-        (
-          Blocks[i].RenderDataSize + Blocks[i].DataSize + sizeof(ShapeList_t::nr_t)
-        ) * (Blocks[i].MaxElementPerBlock + 1) + sizeof(PerBlockData_t)
-      );
-    }
-
-    kt.Open();
-    kt_root = kt_NewNode(&kt);
-    bm.Open(sizeof(bm_BaseData_t) + KeySizesSum);
-    BlockQueue.Open();
-    ShapeList.Open();
-
-    fid.Open(this);
-  }
+  );
   void Close(){
     fid.Close(this);
 
@@ -318,8 +302,7 @@ struct shaper_t{
     const void *KeyDataArray,
     ShapeTypeAmount_t ShapeType,
     const void *RenderData,
-    const void *Data,
-    BlockID_t *BlockID
+    const void *Data
   ){
     bm_NodeReference_t bmnr;
     bm_BaseData_t *bmbase;
@@ -339,7 +322,7 @@ struct shaper_t{
         bmbase = (bm_BaseData_t *)bm[bmnr];
         bmbase->ShapeType = ShapeType;
         bmbase->FirstBlockNR = Block.List.NewNode();
-        *BlockID = bmbase->FirstBlockNR;
+        SetPerBlockData(bmnr, bmbase->ShapeType, bmbase->FirstBlockNR);
         bmbase->LastBlockNR = bmbase->FirstBlockNR;
         bmbase->LastBlockElementCount = 0;
         __MemoryCopy(KeyDataArray, &bmbase[1], KeySizesSum);
@@ -373,13 +356,23 @@ struct shaper_t{
     if(bmbase->LastBlockElementCount == Block.MaxElementPerBlock){
       bmbase->LastBlockElementCount = 0;
       auto blnr = Block.List.NewNode();
-      *BlockID = blnr;
+      SetPerBlockData(bmnr, bmbase->ShapeType, blnr);
       Block.List.linkNextOfOrphan(bmbase->LastBlockNR, blnr);
       bmbase->LastBlockNR = blnr;
     }
     else{
-      BlockID->sic();
       bmbase->LastBlockElementCount++;
+
+      PerBlockData_t& data = GetPerBlockData(ShapeType, bmbase->LastBlockNR);
+      data.MinEdit = std::min(data.MinEdit, (uint32_t)bmbase->LastBlockElementCount * Block.RenderDataSize);
+      data.MaxEdit = std::max(data.MaxEdit, (uint32_t)(bmbase->LastBlockElementCount + 1) * Block.RenderDataSize);
+
+      if (data.bqid.iic() == true) {
+        data.bqid = BlockQueue.NewNodeLast();
+        auto& bque = BlockQueue[data.bqid];
+        bque.blid = bmbase->LastBlockNR;
+        bque.bmid = bmnr;
+      }
     }
 
     gt_NoNewBlockManager:
@@ -450,7 +443,8 @@ struct shaper_t{
     /* we just deleted last so lets check if we can just decrease count */
     if(bmbase->LastBlockElementCount != 0){
       bmbase->LastBlockElementCount--;
-      PerBlockData->si();
+      fan::throw_error("todo implement");
+      //PerBlockData->si();
       return;
     }
     
