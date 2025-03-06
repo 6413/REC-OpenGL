@@ -41,10 +41,6 @@
 #ifndef shaper_set_fan
   #define shaper_set_fan 0
 #endif
-#ifdef gloco
-  #error use cpp not c
-#endif
-#define gloco gloco_is_not_allowed
 
 struct shaper_t{
   public: /* -------------------------------------------------------------------------------- */
@@ -183,27 +179,25 @@ struct shaper_t{
   */
   typedef uint16_t _blid_t;
 
-  #define BDBT_set_prefix KeyTree
+  #define BDBT_set_prefix _KeyTree
   #define BDBT_set_type_node ktbmnr_t
   #define BDBT_set_lcpp
-  #define BDBT_set_KeySize 0
   #ifdef shaper_set_MaxKeySize
     #define BDBT_set_MaxKeySize (shaper_set_MaxKeySize * 8)
   #endif
   #define BDBT_set_AreWeInsideStruct 1
   #include <BDBT/BDBT.h>
-  KeyTree_t KeyTree;
-  typedef KeyTree_Key_t Key_t;
-  KeyTree_NodeReference_t KeyTree_root;
+  _KeyTree_t _KeyTree;
+  _KeyTree_NodeReference_t _KeyTree_root;
 
   public: /* -------------------------------------------------------------------------------- */
 
-  typedef Key_t::BitOrder_t KeyBitOrder_t;
-  constexpr static KeyBitOrder_t KeyBitOrderLow = Key_t::BitOrderLow;
-  constexpr static KeyBitOrder_t KeyBitOrderHigh = Key_t::BitOrderHigh;
-  constexpr static KeyBitOrder_t KeyBitOrderAny = Key_t::BitOrderAny;
+  typedef _KeyTree_BitOrder_t KeyBitOrder_t;
+  constexpr static KeyBitOrder_t KeyBitOrderLow = _KeyTree_BitOrderLow;
+  constexpr static KeyBitOrder_t KeyBitOrderHigh = _KeyTree_BitOrderHigh;
+  constexpr static KeyBitOrder_t KeyBitOrderAny = _KeyTree_BitOrderAny;
 
-  private: /* ------------------------------------------------------------------------------- */
+  public: /* ------------------------------------------------------------------------------- */
 
   struct KeyType_t{
     KeySizeInBytes_t Size;
@@ -214,7 +208,7 @@ struct shaper_t{
       return (KeySizeInBits_t)Size * 8;
     }
   };
-  KeyType_t *KeyTypes;
+  KeyType_t *_KeyTypes;
   KeyTypeAmount_t KeyTypeAmount;
 
   #define BLL_set_prefix BlockList
@@ -227,6 +221,7 @@ struct shaper_t{
   #define BLL_set_type_node _blid_t
   #include <BLL/BLL.h>
   struct ShapeType_t{
+    ShapeType_t() {}
     /* this will be used from BlockList callbacks with offsetless */
     shaper_t *shaper;
     ShapeTypeAmount_t sti;
@@ -242,13 +237,27 @@ struct shaper_t{
     ShapeDataSize_t DataSize;
 
     #if shaper_set_fan
-    fan::opengl::core::vao_t m_vao;
-    fan::opengl::core::vbo_t m_vbo;
+    struct gl_t {
+      fan::opengl::core::vao_t m_vao;
+      fan::opengl::core::vbo_t m_vbo;
 
-    std::vector<shape_gl_init_t> locations;
-    fan::opengl::context_t::shader_nr_t shader;
+      std::vector<shape_gl_init_t> locations;
+      fan::graphics::context_shader_nr_t shader;
+      bool instanced = true;
+      GLuint draw_mode = GL_TRIANGLES;
+      GLsizei vertex_count = 6;
+    };
+    struct vk_t {
+      fan::vulkan::context_t::pipeline_t pipeline;
+      fan::vulkan::context_t::ssbo_t shape_data;
+      uint32_t vertex_count = 6;
+    };
+    std::variant<
+      gl_t,
+      vk_t
+    > renderer;
     #endif
-
+    //fan::vulkan::context_t::descriptor_t<vulkan_buffer_count>
     MaxElementPerBlock_t MaxElementPerBlock(){
       return (MaxElementPerBlock_t)MaxElementPerBlock_m1 + 1;
     }
@@ -257,6 +266,7 @@ struct shaper_t{
   #define BLL_set_Link 0
   #define BLL_set_Recycle 0
   #define BLL_set_IntegerNR 1
+  #define BLL_set_CPP_ConstructDestruct 1
   #define BLL_set_CPP_Node_ConstructDestruct 1
   #define BLL_set_CPP_CopyAtPointerChange 1
   #define BLL_set_AreWeInsideStruct 1
@@ -382,17 +392,49 @@ private:
   using ShapeID_t = ShapeList_t::nr_t;
 
   #if shaper_set_fan
-    fan::opengl::context_t::shader_nr_t GetShader(ShapeTypeIndex_t sti) {
-      return ShapeTypes[sti].shader;
+    fan::graphics::context_shader_nr_t GetShader(ShapeTypeIndex_t sti) {
+      auto& d = ShapeTypes[sti];
+      if (std::holds_alternative<ShapeType_t::gl_t>(d.renderer)) {
+        return std::get<ShapeType_t::gl_t>(d.renderer).shader;
+      }
+      if (std::holds_alternative<ShapeType_t::vk_t>(d.renderer)) {
+        fan::graphics::context_shader_nr_t s_nr;
+        s_nr.vk = std::get<ShapeType_t::vk_t>(d.renderer).pipeline.shader_nr;
+        return s_nr;
+      }
+      fan::throw_error("");
+      static fan::graphics::context_shader_nr_t doesnt_happen;
+      return doesnt_happen;
     }
     fan::opengl::core::vao_t GetVAO(ShapeTypeIndex_t sti) {
-      return ShapeTypes[sti].m_vao;
+      auto& st = ShapeTypes[sti];
+      if (std::holds_alternative<ShapeType_t::gl_t>(st.renderer)) {
+        return std::get<ShapeType_t::gl_t>(st.renderer).m_vao;
+      }
+      fan::throw_error("Unsupported renderer type");
+      fan::opengl::core::vao_t doesnt_happen;
+      return doesnt_happen;
     }
     fan::opengl::core::vbo_t GetVBO(ShapeTypeIndex_t sti) {
-      return ShapeTypes[sti].m_vbo;
+      auto& st = ShapeTypes[sti];
+      if (std::holds_alternative<ShapeType_t::gl_t>(st.renderer)) {
+        return std::get<ShapeType_t::gl_t>(st.renderer).m_vbo;
+      }
+      fan::throw_error("Unsupported renderer type");
+      fan::opengl::core::vbo_t doesnt_happen;
+      return doesnt_happen;
     }
     std::vector<shape_gl_init_t>& GetLocations(ShapeTypeIndex_t sti) {
-      return ShapeTypes[sti].locations;
+      auto& st = ShapeTypes[sti];
+      if (std::holds_alternative<ShapeType_t::gl_t>(st.renderer)) {
+        return std::get<ShapeType_t::gl_t>(st.renderer).locations;
+      }
+      fan::throw_error("Unsupported renderer type");
+      static std::vector<shape_gl_init_t> doesnt_happen;
+      return doesnt_happen;
+    }
+    ShapeTypes_NodeData_t& GetShapeTypes(ShapeTypeIndex_t sti) {
+      return ShapeTypes[sti];
     }
   #endif
 
@@ -432,7 +474,7 @@ private:
   void WriteKeys(ShapeID_t ShapeID, void *dst){
     auto &s = ShapeList[ShapeID];
     auto &bm = BlockManager[s.bmid];
-    __MemoryCopy(&bm.KeyPack, dst, bm.KeyPackSize);
+    __MemoryCopy(bm.KeyPack, dst, bm.KeyPackSize);
   }
 
   ShapeRenderData_t *GetRenderData(
@@ -469,24 +511,38 @@ private:
   }
 
   struct BlockProperties_t{
+    BlockProperties_t() {}
     MaxElementPerBlock_t MaxElementPerBlock;
     decltype(ShapeType_t::RenderDataSize) RenderDataSize;
     decltype(ShapeType_t::DataSize) DataSize;
 
     #if shaper_set_fan
-    std::vector<shape_gl_init_t> locations;
-    fan::opengl::context_t::shader_nr_t shader;
+    struct gl_t {
+      std::vector<shape_gl_init_t> locations;
+      fan::graphics::context_shader_nr_t shader;
+      bool instanced = true;
+      GLuint draw_mode = GL_TRIANGLES;
+      GLsizei vertex_count = 6;
+    };
+    struct vk_t {
+      fan::vulkan::context_t::pipeline_t pipeline;
+      fan::vulkan::context_t::ssbo_t shape_data;
+      uint32_t vertex_count = 6;
+    };
+    std::variant<
+      gl_t,
+      vk_t
+    > renderer;
+
     #endif
   };
 
   void Open(){
     KeyTypeAmount = 0;
-    KeyTypes = NULL;
+    _KeyTypes = NULL;
 
-    ShapeTypes.Open();
-
-    KeyTree.Open();
-    KeyTree_root = KeyTree.NewNode();
+    _KeyTree.Open();
+    _KeyTree_root = _KeyTree.NewNode();
     BlockManager.Open();
     BlockEditQueue.Open();
     ShapeList.Open();
@@ -495,32 +551,31 @@ private:
     ShapeList.Close();
     BlockEditQueue.Close();
     BlockManager.Close();
-    KeyTree.Close();
+    _KeyTree.Close();
 
     for(auto &st : ShapeTypes){
       st.BlockList.Close();
     }
-    ShapeTypes.Close();
 
-    A_resize(KeyTypes, 0);
+    A_resize(_KeyTypes, 0);
   }
 
   void AddKey(KeyTypeIndex_t KeyTypeIndex, KeySizeInBytes_t Size, KeyBitOrder_t BitOrder){
     if(KeyTypeIndex >= KeyTypeAmount){
       KeyTypeAmount = KeyTypeIndex;
       KeyTypeAmount++;
-      KeyTypes = (KeyType_t *)A_resize(
-        KeyTypes,
+      _KeyTypes = (KeyType_t *)A_resize(
+        _KeyTypes,
         (uintptr_t)KeyTypeAmount * sizeof(KeyType_t)
       );
     }
 
-    KeyTypes[KeyTypeIndex].Size = Size;
-    KeyTypes[KeyTypeIndex].BitOrder = BitOrder;
+    _KeyTypes[KeyTypeIndex].Size = Size;
+    _KeyTypes[KeyTypeIndex].BitOrder = BitOrder;
   }
 
   void SetKeyOrder(KeyTypeIndex_t KeyTypeIndex, KeyBitOrder_t BitOrder){
-    KeyTypes[KeyTypeIndex].BitOrder = BitOrder;
+    _KeyTypes[KeyTypeIndex].BitOrder = BitOrder;
   }
 
   loco_t* get_loco() {
@@ -554,40 +609,25 @@ private:
     st.RenderDataSize = bp.RenderDataSize;
     st.DataSize = bp.DataSize;
 
-    #if shaper_set_fan
-    auto& context = get_loco()->get_context();
-
-    st.m_vao.open(context);
-    st.m_vbo.open(context, fan::opengl::GL_ARRAY_BUFFER);
-    st.m_vao.bind(context);
-    st.m_vbo.bind(context);
-    st.shader = bp.shader;
-    st.locations = bp.locations;
-    uint64_t ptr_offset = 0;
-    for (const auto& location : st.locations) {
-      context.opengl.glEnableVertexAttribArray(location.index);
-      context.opengl.glVertexAttribPointer(location.index, location.size, location.type, fan::opengl::GL_FALSE, location.stride, (void*)ptr_offset);
-      context.opengl.glVertexAttribDivisor(location.index, 1);
-      switch (location.type) {
-      case fan::opengl::GL_FLOAT: {
-        ptr_offset += location.size * sizeof(f32_t);
-        break;
-      }
-      case fan::opengl::GL_UNSIGNED_INT: {
-        ptr_offset += location.size * sizeof(fan::opengl::GLuint);
-        break;
-      }
-      default: {
-        fan::throw_error_impl();
-      }
-      }
+  #if shaper_set_fan
+    if (std::holds_alternative<BlockProperties_t::gl_t>(bp.renderer)) {
+      get_loco()->gl.add_shape_type(st, bp);
     }
-    #endif
+    else if (std::holds_alternative<BlockProperties_t::vk_t>(bp.renderer)) {
+      ShapeType_t::vk_t d;
+      auto& bpr = std::get<BlockProperties_t::vk_t>(bp.renderer);
+      d.pipeline = bpr.pipeline;
+      d.shape_data = bpr.shape_data;
+      d.vertex_count = bpr.vertex_count;
+      st.renderer = d;
+      //st.renderer.emplace<ShapeType_t::vk_t>();
+    }
+  #endif
   }
 
   void ProcessBlockEditQueue(){
     #if shaper_set_fan
-    fan::opengl::context_t &context = get_loco()->get_context();
+    fan::opengl::context_t &context = get_loco()->context.gl;
     #endif
 
     auto beid = BlockEditQueue.GetNodeFirst();
@@ -597,15 +637,29 @@ private:
       auto &bu = GetBlockUnique(be.sti, be.blid);
 
       #if shaper_set_fan
-      st.m_vao.bind(context);
-      fan::opengl::core::edit_glbuffer(
-        get_loco()->get_context(),
-        st.m_vbo.m_buffer,
-        _GetRenderData(be.sti, be.blid, 0) + bu.MinEdit,
-        GetRenderDataOffset(be.sti, be.blid) + bu.MinEdit,
-        bu.MaxEdit - bu.MinEdit,
-        fan::opengl::GL_ARRAY_BUFFER
-      );
+      if (std::holds_alternative<ShapeType_t::gl_t>(st.renderer)) {
+        auto& gl = std::get<ShapeType_t::gl_t>(st.renderer);
+        gl.m_vao.bind(context);
+        fan::opengl::core::edit_glbuffer(
+          context,
+          gl.m_vbo.m_buffer,
+          _GetRenderData(be.sti, be.blid, 0) + bu.MinEdit,
+          GetRenderDataOffset(be.sti, be.blid) + bu.MinEdit,
+          bu.MaxEdit - bu.MinEdit,
+          GL_ARRAY_BUFFER
+        );
+      }
+      else if (std::holds_alternative<ShapeType_t::vk_t>(st.renderer)) {
+        auto& vk = std::get<ShapeType_t::vk_t>(st.renderer);
+        auto wrote = bu.MaxEdit - bu.MinEdit;
+        //fan::print(((decltype(get_loco()->rectangle)::vi_t*)(_GetRenderData(be.sti, be.blid, 0) + bu.MinEdit))->position, (GetRenderDataOffset(be.sti, be.blid) + bu.MinEdit) / GetRenderDataSize(be.sti));
+        memcpy(
+          vk.shape_data.data + (GetRenderDataOffset(be.sti, be.blid) + bu.MinEdit), // data  + offset
+          _GetRenderData(be.sti, be.blid, 0) + bu.MinEdit,
+          wrote
+        );
+        
+      }
       #endif
 
       bu.clear();
@@ -657,42 +711,60 @@ private:
 
   void _RenderDataReset(ShapeTypeIndex_t sti){
     auto &st = ShapeTypes[sti];
-
+    #if shaper_set_fan
     /* TODO remove all block edit queue stuff */
-
     BlockList_t::nrtra_t traverse;
     traverse.Open(&st.BlockList);
-    #if shaper_set_fan
-    st.m_vao.bind(get_loco()->get_context());
-    #endif
-    while(traverse.Loop(&st.BlockList)){
-      #if shaper_set_fan
-      fan::opengl::core::edit_glbuffer(
-        get_loco()->get_context(),
-        st.m_vbo.m_buffer,
-        _GetRenderData(sti, traverse.nr, 0),
-        GetRenderDataOffset(sti, traverse.nr),
-        st.RenderDataSize * st.MaxElementPerBlock(),
-        fan::opengl::GL_ARRAY_BUFFER
-      );
-      #endif
+    
+    if (std::holds_alternative<ShapeType_t::gl_t>(st.renderer)) {
+      auto& gl = std::get<ShapeType_t::gl_t>(st.renderer);
+      fan::opengl::context_t &context = get_loco()->context.gl;
+      while(traverse.Loop(&st.BlockList)){
+        fan::opengl::core::edit_glbuffer(
+          context,
+          gl.m_vbo.m_buffer,
+          _GetRenderData(sti, traverse.nr, 0),
+          GetRenderDataOffset(sti, traverse.nr),
+          st.RenderDataSize * st.MaxElementPerBlock(),
+          GL_ARRAY_BUFFER
+        );
+      }
+      traverse.Close(&st.BlockList);
     }
-    traverse.Close(&st.BlockList);
+    else {
+      auto& vk = std::get<ShapeType_t::vk_t>(st.renderer);
+      while (traverse.Loop(&st.BlockList)) {
+        memcpy(vk.shape_data.data, _GetRenderData(sti, traverse.nr, 0), st.RenderDataSize * st.MaxElementPerBlock());
+      }
+      traverse.Close(&st.BlockList);
+    }
+    #endif
   }
   void _BlockListBufferChange(ShapeTypeIndex_t sti, uintptr_t New){
     auto &st = ShapeTypes[sti];
 
     #if shaper_set_fan
-    st.m_vbo.bind(get_loco()->get_context());
-    fan::opengl::core::write_glbuffer(
-      get_loco()->get_context(),
-      st.m_vbo.m_buffer,
-      0,
-      New * st.RenderDataSize * st.MaxElementPerBlock(),
-      fan::opengl::GL_DYNAMIC_DRAW,
-      fan::opengl::GL_ARRAY_BUFFER
-    );
-    _RenderDataReset(sti);
+    if (std::holds_alternative<ShapeType_t::gl_t>(st.renderer)) {
+      auto& gl = std::get<ShapeType_t::gl_t>(st.renderer);
+      gl.m_vbo.bind(get_loco()->get_context().gl);
+      fan::opengl::core::write_glbuffer(
+        get_loco()->get_context().gl,
+        gl.m_vbo.m_buffer,
+        0,
+        New * st.RenderDataSize * st.MaxElementPerBlock(),
+        GL_DYNAMIC_DRAW,
+        GL_ARRAY_BUFFER
+      );
+      _RenderDataReset(sti);
+    }
+    else {
+      auto& vk = std::get<ShapeType_t::vk_t>(st.renderer);
+      //memcpy(vk.shape_data.data, _GetRenderData(sti, traverse.nr, 0) + GetRenderDataOffset(sti, traverse.nr), st.RenderDataSize * st.MaxElementPerBlock());
+      //vk.shape_data.allocate(gloco->context.vk, New * st.RenderDataSize * st.MaxElementPerBlock());
+      //vk.shape_data.m_descriptor.update(gloco->context.vk, 1, 0, 1, 0);
+      //fan::throw_error("");
+      _RenderDataReset(sti);
+    }
     #endif
   }
 
@@ -715,6 +787,19 @@ private:
     BlockList_t::nr_t blid
   ){
     auto &st = ShapeTypes[sti];
+    
+    // how to do without gloco xd
+    if (std::holds_alternative<ShapeType_t::gl_t>(st.renderer)) {
+      auto& gl = std::get<ShapeType_t::gl_t>(st.renderer);
+      get_loco()->shader_erase(gl.shader);
+    }
+    else {
+      //
+      //auto& vk = std::get<ShapeType_t::vk_t>(st.renderer);
+      //get_loco()->context.vk.shader_erase(vk.pipeline.shader_nr);
+      //vk.pipeline.close(get_loco()->context.vk);
+      //vk.shape_data.close(get_loco()->context.vk);
+    }
 
     GetBlockUnique(sti, blid).destructor(*this);
 
@@ -755,9 +840,9 @@ private:
 
     auto &st = ShapeTypes[sti];
 
-    KeyTree_NodeReference_t nr = KeyTree_root;
+    _KeyTree_NodeReference_t nr = _KeyTree_root;
     KeyPackSize_t ikp = 0;
-    Key_t::KeySize_t bdbt_ki;
+    _KeyTree_KeySize_t bdbt_ki;
     KeyType_t *kt;
     uint8_t step;
 
@@ -765,15 +850,15 @@ private:
     while(ikp != KeyPackSize){
 
       auto kti = (KeyTypeIndex_t *)&_KeyPack[ikp];
-      Key_t::q(&KeyTree, sizeof(*kti) * 8, kti, &bdbt_ki, &nr);
+      _KeyTree_QueryNoPointer(&_KeyTree, true, sizeof(*kti) * 8, kti, &bdbt_ki, &nr);
       if(bdbt_ki != sizeof(*kti) * 8){
         step = 0;
         goto gt_newbm;
       }
       ikp += sizeof(*kti);
 
-      kt = &KeyTypes[_kti_GetNormal(*kti)];
-      Key_t::q(&KeyTree, kt->sibit(), &_KeyPack[ikp], &bdbt_ki, &nr);
+      kt = &_KeyTypes[_kti_GetNormal(*kti)];
+      _KeyTree_QueryNoPointer(&_KeyTree, true, kt->sibit(), &_KeyPack[ikp], &bdbt_ki, &nr);
       if(bdbt_ki != kt->sibit()){
         step = 1;
         goto gt_newbm;
@@ -798,6 +883,7 @@ private:
     gt_newbm:
 
     bmid = BlockManager.NewNode();
+    
     bm = &BlockManager[bmid];
     bm->KeyPackSize = KeyPackSize;
     bm->KeyPack = (uint8_t *)A_resize(NULL, bm->KeyPackSize);
@@ -807,26 +893,26 @@ private:
 
     /* DEBUG_HINT if this loop goes above KeyPackSize, your KeyPack is bad */
     while(ikp != KeyPackSize){
-      KeyTree_NodeReference_t out;
+      _KeyTree_NodeReference_t out;
       if(step == 0){
         auto kti = (KeyTypeIndex_t *)&_KeyPack[ikp];
-        kt = &KeyTypes[_kti_GetNormal(*kti)];
+        kt = &_KeyTypes[_kti_GetNormal(*kti)];
 
-        out = KeyTree.NewNode();
+        out = _KeyTree.NewNode();
 
-        Key_t::a(&KeyTree, sizeof(*kti) * 8, kti, bdbt_ki, nr, out);
+        _KeyTree_Add(&_KeyTree, true, sizeof(*kti) * 8, kti, bdbt_ki, nr, out);
 
         ikp += sizeof(*kti);
       }
       else if(step == 1){
         if(ikp + kt->Size != KeyPackSize){
-          out = KeyTree.NewNode();
+          out = _KeyTree.NewNode();
         }
         else{
-          out = *(KeyTree_NodeReference_t *)&bmid;
+          out = *(_KeyTree_NodeReference_t *)&bmid;
         }
 
-        Key_t::a(&KeyTree, kt->sibit(), &_KeyPack[ikp], bdbt_ki, nr, out);
+        _KeyTree_Add(&_KeyTree, true, kt->sibit(), &_KeyPack[ikp], bdbt_ki, nr, out);
 
         ikp += kt->Size;
       }
@@ -866,12 +952,12 @@ private:
   void remove(
     ShapeList_t::nr_t sid
   ){
+
     auto &s = ShapeList[sid];
     auto sti = s.sti;
     auto &st = ShapeTypes[sti];
     auto bmid = s.bmid;
     auto &bm = BlockManager[bmid];
-
     auto lsid = _GetShapeID(sti, bm.LastBlockNR, bm.LastBlockElementCount);
     if(sid != lsid){
       ElementIsFullyEdited(sti, s.blid, s.ElementIndex);
@@ -921,25 +1007,26 @@ private:
 
     _deleteblid(sti, bm.LastBlockNR);
 
-    KeyTree_NodeReference_t knrs[shaper_set_MaxKeyAmountInBM * 2];
+    _KeyTree_NodeReference_t knrs[shaper_set_MaxKeyAmountInBM * 2];
     KeySizeInBytes_t ks[shaper_set_MaxKeyAmountInBM * 2];
 
     auto KeyPack = bm.KeyPack;
-    auto knr = KeyTree_root;
     KeyPackSize_t ikp = 0;
     _KeyIndexInBM_t _kiibm = 0;
-    while(ikp != bm.KeyPackSize){
-      auto kti = (KeyTypeIndex_t *)&KeyPack[ikp];
-      knrs[_kiibm] = knr;
-      ks[_kiibm++] = sizeof(*kti);
-      Key_t::cq(&KeyTree, sizeof(*kti) * 8, kti, &knr);
-      ikp += sizeof(*kti);
-
-      auto &kt = KeyTypes[_kti_GetNormal(*kti)];
-      knrs[_kiibm] = knr;
-      ks[_kiibm++] = kt.Size;
-      Key_t::cq(&KeyTree, kt.sibit(), &KeyPack[ikp], &knr);
-      ikp += kt.Size;
+    {
+      auto knr = _KeyTree_root;
+      while (ikp != bm.KeyPackSize) {
+        auto kti = (KeyTypeIndex_t*)&KeyPack[ikp];
+        knrs[_kiibm] = knr;
+        ks[_kiibm++] = sizeof(*kti);
+        _KeyTree_ConfidentQuery(&_KeyTree, true, sizeof(*kti) * 8, kti, &knr);
+        ikp += sizeof(*kti);
+        auto& kt = _KeyTypes[_kti_GetNormal(*kti)];
+        knrs[_kiibm] = knr;
+        ks[_kiibm++] = kt.Size;
+        _KeyTree_ConfidentQuery(&_KeyTree, true, kt.sibit(), &KeyPack[ikp], &knr);
+        ikp += kt.Size;
+      }
     }
 
     /* TODO this part can be faster if used some different function instead of .r */
@@ -947,14 +1034,17 @@ private:
     while(1){
       auto size = ks[_kiibm];
       ikp -= size;
-      Key_t::r(&KeyTree, (KeySizeInBits_t)size * 8, &KeyPack[ikp], knrs[_kiibm]);
-      if(KeyTree.inrhc(knrs[_kiibm])){
+      {
+        auto knr = knrs[_kiibm];
+        _KeyTree_Remove(&_KeyTree, true, (KeySizeInBits_t)size * 8, &KeyPack[ikp], &knr);
+      }
+      if(_KeyTree.inrhc(knrs[_kiibm])){
         break;
       }
       if(_kiibm == 0){
         break;
       }
-      KeyTree.Recycle(knrs[_kiibm]);
+      _KeyTree.Recycle(knrs[_kiibm]);
       _kiibm--;
     }
 
@@ -965,22 +1055,22 @@ private:
   struct KeyTraverse_t{
     uint8_t State;
     KeyIndexInBM_t kiibm;
-    KeyTree_NodeReference_t knr;
+    _KeyTree_NodeReference_t knr;
     KeyType_t *kt;
     bool isbm;
 
     KeyTypeIndex_t kd0[shaper_set_MaxKeyAmountInBM];
     KeyData_t kd1[shaper_set_MaxKeySizesSum][shaper_set_MaxKeyAmountInBM];
-    Key_t::Traverse_t tra0[shaper_set_MaxKeyAmountInBM];
-    Key_t::Traverse_t behindtra; /* little maneuver */
-    Key_t::Traverse_t tra1[shaper_set_MaxKeyAmountInBM];
+    _KeyTree_Traverse_t tra0[shaper_set_MaxKeyAmountInBM];
+    _KeyTree_Traverse_t behindtra; /* little maneuver */
+    _KeyTree_Traverse_t tra1[shaper_set_MaxKeyAmountInBM];
 
     void Init(
       shaper_t &shaper
     ){
       State = 0;
       kiibm = 0;
-      behindtra.Output = shaper.KeyTree_root;
+      behindtra.Output = shaper._KeyTree_root;
     }
     bool Loop(
       shaper_t &shaper
@@ -989,42 +1079,48 @@ private:
 
       switch(State){
         case 0:{
-          tra0[kiibm].i0(
-            tra1[(uintptr_t)kiibm - 1].Output, /* tra1 index is underflowable on purpose */
-            KeyBitOrderAny
+         _KeyTree_TraverseInit(
+            &tra0[kiibm],
+            KeyBitOrderLow,
+            tra1[(uintptr_t)kiibm - 1].Output /* tra1 index is underflowable on purpose */
           );
           State = 1;
         }
         case 1:{
-          if(tra0[kiibm].t0(
-            &shaper.KeyTree,
+          if(_KeyTree_Traverse(
+            &shaper._KeyTree,
+            &tra0[kiibm],
+            true,
+            KeyBitOrderLow,
             sizeof(*kd0) * 8,
-            &kd0[kiibm],
-            KeyBitOrderAny
+            &kd0[kiibm]
           ) == false){
             if(kiibm == 0){
               return false;
             }
             --kiibm;
             isbm = false;
-            kt = &shaper.KeyTypes[kd0[kiibm]];
+            kt = &shaper._KeyTypes[kd0[kiibm]];
             State = 2;
             goto gt_reswitch;
           }
           isbm = _kti_GetLastBit(kd0[kiibm]);
-          kt = &shaper.KeyTypes[_kti_GetNormal(kd0[kiibm])];
-          tra1[kiibm].i0(
-            tra0[kiibm].Output,
-            kt->BitOrder
+          kt = &shaper._KeyTypes[_kti_GetNormal(kd0[kiibm])];
+          _KeyTree_TraverseInit(
+            &tra1[kiibm],
+            kt->BitOrder,
+            tra0[kiibm].Output
           );
           State = 2;
         }
         case 2:{
-          if(tra1[kiibm].t0(
-            &shaper.KeyTree,
+          if(_KeyTree_Traverse(
+            &shaper._KeyTree,
+            &tra1[kiibm],
+            true,
+            kt->BitOrder,
             kt->sibit(),
-            &kd1[kiibm],
-            kt->BitOrder
+            &kd1[kiibm]
           ) == false){
             State = 1;
             goto gt_reswitch;
@@ -1042,7 +1138,7 @@ private:
       return kd1[kiibm - !isbm];
     }
     KeyTypeIndex_t kti(shaper_t &shaper){
-      return ((uintptr_t)kt - (uintptr_t)shaper.KeyTypes) / sizeof(KeyTypes[0]);
+      return ((uintptr_t)kt - (uintptr_t)shaper._KeyTypes) / sizeof(_KeyTypes[0]);
     }
     bmid_t bmid(){
       return *(bmid_t *)&tra1[kiibm].Output;
